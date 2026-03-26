@@ -1,6 +1,9 @@
 # PawPal+ Project Reflection
 
 ## 1. System Design
+=> Add a pet
+=> Feed a pet
+=> Schedule a walk 
 
 **a. Initial design**
 
