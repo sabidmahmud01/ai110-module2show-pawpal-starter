@@ -52,8 +52,9 @@ The revised design breaks it into smaller private helpers (_filter_by_time() and
 
 **b. Tradeoffs**
 
-- Describe one tradeoff your scheduler makes.
-- Why is that tradeoff reasonable for this scenario?
+The conflict detector only flags tasks that share an **exact** `scheduled_time` string (e.g., both set to `"08:00"`). It does not check whether two tasks *overlap* — for example, a 30-minute task starting at `08:00` and a 20-minute task starting at `08:15` would not be flagged even though they run at the same time.
+
+This tradeoff is reasonable for a starter app because exact-match detection is simple to implement and easy to understand. True overlap detection would require converting `HH:MM` strings to `datetime` objects, computing end times, and checking intervals — significantly more logic for a marginal gain in a demo context where users manually enter clean time values. The tradeoff can be revisited once the core scheduling loop is stable.
 
 ---
 

@@ -1,4 +1,5 @@
 from dataclasses import dataclass, field
+from datetime import date, timedelta
 from typing import Optional
 
 
@@ -28,12 +29,27 @@ class Pet:
 class Task:
     description: str
     time: int  # duration in minutes
-    frequency: str  # e.g., "daily", "weekly"
+    frequency: str  # "daily", "weekly", "monthly"
+    scheduled_time: Optional[str] = None  # "HH:MM" format, used for sorting and conflict detection
+    due_date: Optional[date] = None       # used to calculate next occurrence for recurring tasks
     completed: bool = False
 
-    def mark_complete(self) -> None:
-        """Mark this task as completed."""
+    def mark_complete(self) -> Optional["Task"]:
+        """Mark this task as completed and return the next occurrence if it recurs daily or weekly."""
         self.completed = True
+        if self.frequency == "daily":
+            next_date = (self.due_date or date.today()) + timedelta(days=1)
+        elif self.frequency == "weekly":
+            next_date = (self.due_date or date.today()) + timedelta(weeks=1)
+        else:
+            return None
+        return Task(
+            description=self.description,
+            time=self.time,
+            frequency=self.frequency,
+            scheduled_time=self.scheduled_time,
+            due_date=next_date,
+        )
 
     def to_dict(self) -> dict:
         """Return this task as a serializable dictionary."""
@@ -41,7 +57,9 @@ class Task:
             "description": self.description,
             "time": self.time,
             "frequency": self.frequency,
-            "completed": self.completed
+            "scheduled_time": self.scheduled_time or "—",
+            "due_date": str(self.due_date) if self.due_date else "—",
+            "completed": self.completed,
         }
 
 
@@ -83,12 +101,55 @@ class Scheduler:
     def add_task(self, task: "Task", pet: Pet) -> None:
         """Add a task to a pet and refresh the scheduler task list."""
         pet.add_task(task)
-        self.tasks = self.owner.get_all_tasks()  # refresh tasks list
+        self.tasks = self.owner.get_all_tasks()
 
     def remove_task(self, description: str, pet: Pet) -> None:
         """Remove matching tasks from a pet and refresh the scheduler task list."""
         pet.tasks = [t for t in pet.tasks if t.description != description]
         self.tasks = self.owner.get_all_tasks()
+
+    def mark_task_complete(self, description: str, pet: Pet) -> None:
+        """Mark a task complete and re-queue a new instance if it recurs daily or weekly."""
+        for task in pet.get_tasks():
+            if task.description == description and not task.completed:
+                next_task = task.mark_complete()
+                if next_task:
+                    pet.add_task(next_task)
+                self.tasks = self.owner.get_all_tasks()
+                break
+
+    def sort_by_time(self) -> list["Task"]:
+        """Return tasks sorted by scheduled_time in HH:MM format; tasks without a time come last."""
+        timed = [t for t in self.tasks if t.scheduled_time]
+        untimed = [t for t in self.tasks if not t.scheduled_time]
+        return sorted(timed, key=lambda t: t.scheduled_time) + untimed
+
+    def filter_tasks(self, completed: Optional[bool] = None, pet_name: Optional[str] = None) -> list["Task"]:
+        """Filter tasks by completion status and/or pet name."""
+        results = []
+        for pet in self.owner.pets:
+            if pet_name and pet.name != pet_name:
+                continue
+            for task in pet.get_tasks():
+                if completed is not None and task.completed != completed:
+                    continue
+                results.append(task)
+        return results
+
+    def detect_conflicts(self) -> list[str]:
+        """Return warning messages for any two tasks sharing the same scheduled_time."""
+        warnings = []
+        seen: dict[str, str] = {}
+        for task in self.tasks:
+            if not task.scheduled_time:
+                continue
+            if task.scheduled_time in seen:
+                warnings.append(
+                    f"Conflict at {task.scheduled_time}: '{seen[task.scheduled_time]}' and '{task.description}'"
+                )
+            else:
+                seen[task.scheduled_time] = task.description
+        return warnings
 
     def _filter_by_time(self, tasks: list["Task"]) -> list["Task"]:
         """Keep tasks that fit within the owner's available time."""
@@ -102,7 +163,6 @@ class Scheduler:
 
     def _sort_by_priority(self, tasks: list["Task"]) -> list["Task"]:
         """Sort tasks by frequency priority and then by longer duration first."""
-        # Sort by frequency: daily first, then weekly, etc.
         freq_order = {"daily": 0, "weekly": 1, "monthly": 2}
         return sorted(tasks, key=lambda t: (freq_order.get(t.frequency, 3), -t.time))
 
