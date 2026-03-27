@@ -47,8 +47,9 @@ The revised design breaks it into smaller private helpers (_filter_by_time() and
 
 **a. Constraints and priorities**
 
-- What constraints does your scheduler consider (for example: time, priority, preferences)?
-- How did you decide which constraints mattered most?
+The scheduler considers two constraints: **time budget** (the owner's available minutes per day) and **frequency priority** (daily tasks outrank weekly, which outrank monthly). Tasks are first sorted by frequency priority and then by duration (longer tasks first within the same frequency tier), and then trimmed to fit the time budget via a greedy pass.
+
+Time budget was treated as the hard constraint — no task can be included if it would exceed the limit — because missing it would make the plan impossible to execute. Frequency was the soft ranking signal because a daily task (like feeding) is more urgent than a monthly one (like a vet checkup), even if the monthly task takes longer.
 
 **b. Tradeoffs**
 
@@ -62,13 +63,17 @@ This tradeoff is reasonable for a starter app because exact-match detection is s
 
 **a. How you used AI**
 
-- How did you use AI tools during this project (for example: design brainstorming, debugging, refactoring)?
-- What kinds of prompts or questions were most helpful?
+AI was used in three distinct roles across the project phases:
+
+1. **Design review** — After drafting the initial UML, AI was used to challenge the design: "Does each class have a single clear responsibility?" This surfaced the `scheduled_plan` attribute issue and the need to split `generate_plan()` into private helpers before any code was written.
+2. **Implementation** — AI drafted method bodies (e.g., `sort_by_time`, `detect_conflicts`, the recurring logic in `mark_complete`) based on method signatures and docstrings that were already agreed upon. This kept the AI working within a pre-approved contract rather than designing freely.
+3. **Test generation** — AI suggested test cases from method signatures, which were reviewed for coverage gaps (e.g., the untimed-tasks-ignored case for conflict detection was added after reviewing the draft).
+
+The most effective prompts were specific and constrained: "Given this method signature and docstring, implement the body" produced better results than open-ended "build a scheduler" prompts.
 
 **b. Judgment and verification**
 
-- Describe one moment where you did not accept an AI suggestion as-is.
-- How did you evaluate or verify what the AI suggested?
+When AI drafted `detect_conflicts()`, the initial suggestion used a nested loop (O(n²)) to compare every task pair. That was rejected in favor of the single-pass dictionary approach (`seen: dict[str, str]`) because the O(n) version is easier to read and scales better, even though the dataset is small. The AI suggestion was evaluated by asking: "Is there a simpler data structure that avoids the double loop?" — the answer was a plain dict tracking the first task seen at each time slot. The final version was verified by writing the conflict detection tests, including a case with no conflicts and one with untimed tasks that should be ignored.
 
 ---
 
@@ -76,13 +81,19 @@ This tradeoff is reasonable for a starter app because exact-match detection is s
 
 **a. What you tested**
 
-- What behaviors did you test?
-- Why were these tests important?
+The test suite covers 15 behaviors across five areas:
+
+| Area | Why it mattered |
+|---|---|
+| Plan generation (happy path + no tasks) | Core feature — if this breaks, nothing else matters |
+| Sort by time (chronological + untimed last) | Ensures the UI display is trustworthy, not misleading |
+| Recurring tasks (daily, weekly, monthly, re-queue) | High risk of off-by-one errors with `timedelta`; important to pin the exact date math |
+| Conflict detection (flagged, no false positive, untimed ignored) | A false positive would erode owner trust; a missed conflict would cause real scheduling failures |
+| Filtering (by status, by pet name) | Powers the "Incomplete only" tab in the UI — wrong results would silently mislead the user |
 
 **b. Confidence**
 
-- How confident are you that your scheduler works correctly?
-- What edge cases would you test next if you had more time?
+Confidence: **4 out of 5**. All 15 tests pass and cover both happy paths and meaningful edge cases. The gap is duration-based overlap detection — two tasks at `08:00` and `08:15` where the first runs 30 minutes would overlap, but the current detector misses it. That would require converting `HH:MM` to `datetime`, computing end times, and checking ranges — the next logical test to add.
 
 ---
 
@@ -90,12 +101,12 @@ This tradeoff is reasonable for a starter app because exact-match detection is s
 
 **a. What went well**
 
-- What part of this project are you most satisfied with?
+The separation between the backend (`pawpal_system.py`) and the UI (`app.py`) worked well. Because the classes had clear, tested interfaces, connecting them to Streamlit was mechanical — each button just called a method and displayed the return value. This made the UI easy to update without touching any scheduling logic, and it meant the logic could be verified in isolation via `pytest` before the UI existed.
 
 **b. What you would improve**
 
-- If you had another iteration, what would you improve or redesign?
+The `Owner` and `Pet` objects are initialized once into `st.session_state` using the default values at page load. If the user changes the owner name or pet name after the first run, those changes are silently ignored because the session-state guard (`if "owner" not in st.session_state`) skips re-initialization. A future iteration would add a "Reset session" button that clears `st.session_state` and rebuilds the objects from the current form values.
 
 **c. Key takeaway**
 
-- What is one important thing you learned about designing systems or working with AI on this project?
+The most important lesson was that AI is a powerful implementation tool but a poor architect. Every time AI was given an open-ended design question it produced plausible-looking but subtly wrong answers — for example, a `Scheduler` that held a direct reference to a single `Pet` instead of routing through `Owner`, which would have broken multi-pet support. When AI was given a signed contract (method name, parameters, return type, docstring) and asked only to fill in the body, the results were reliable and fast. The human's job is to own the architecture; AI's job is to execute within it.
